@@ -202,4 +202,101 @@ export interface Database {
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }
+  // `api` — contratos EXPUESTOS a PostgREST. El servicio escribe/lee `ai` (OCULTO) SOLO
+  // a través de estos wrappers (mig 108: api.* invoker → private.* definer). Espejo a
+  // mano de las firmas `_v1`; si nodoauto-database cambia un contrato, se actualiza acá.
+  api: {
+    Tables: Record<string, never>
+    Views: Record<string, never>
+    Functions: {
+      // ── Escritura del análisis EN VIVO (loop 1) ──────────────────────────────
+      analisis_encolar_job_v1: {
+        Args: { p_caso_id: string; p_tipo: string }
+        Returns: Array<{
+          id: string
+          caso_id: string
+          tipo: string
+          status: JobStatus
+          modelo_usado: string | null
+          tokens_in: number | null
+          tokens_out: number | null
+          costo_usd: number | null
+          intentos: number
+          error: string | null
+          created_at: string
+          updated_at: string
+          started_at: string | null
+          finished_at: string | null
+          creado: boolean
+        }>
+      }
+      analisis_tomar_job_v1: {
+        Args: { p_job_id: string }
+        Returns: Array<{ id: string; caso_id: string; tipo: string; intentos: number }>
+      }
+      analisis_routing_v1: {
+        Args: { p_tipo_tarea: string }
+        Returns: Array<{
+          id: string
+          tipo_tarea: string
+          modelo_preferido: string
+          modelo_fallback: string | null
+          presupuesto_usd_dia: number | null
+          max_tokens_out: number | null
+          activo: boolean
+        }>
+      }
+      analisis_modelos_v1: {
+        Args: Record<string, never>
+        Returns: Array<{
+          id: string
+          proveedor: string
+          model_id: string
+          alias: string
+          capacidades: string[]
+          costo_in_usd_mtok: number | null
+          costo_out_usd_mtok: number | null
+          contexto_tokens: number | null
+          activo: boolean
+        }>
+      }
+      analisis_guardar_v1: {
+        Args: {
+          p_job_id: string
+          p_caso_id: string
+          p_resumen: string | null
+          p_diagnostico: string | null
+          p_severidad: Severidad | null
+          p_confianza: number | null
+          p_hallazgos: Json
+          p_modelo_usado: string | null
+          p_tokens_total: number | null
+          p_tokens_in: number | null
+          p_tokens_out: number | null
+          p_costo_usd: number | null
+        }
+        Returns: undefined
+      }
+      analisis_fallar_job_v1: {
+        Args: { p_job_id: string; p_intentos: number; p_error: string }
+        Returns: undefined
+      }
+      // ── Propuestas (loop 3, §9): registra, NUNCA aplica ──────────────────────
+      suggestions_registrar_v1: {
+        Args: {
+          p_tipo: SuggestionTipo
+          p_origen: string
+          p_problema: string
+          p_evidencia: Json
+          p_cambio_sugerido: string
+          p_dueno: string | null
+          p_metrica_esperada: string | null
+          p_impacto_esperado: string | null
+        }
+        Returns: string
+      }
+    }
+    Enums: Record<string, never>
+    CompositeTypes: Record<string, never>
+  }
 }

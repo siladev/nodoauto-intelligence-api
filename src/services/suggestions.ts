@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { Db } from '../lib/supabase.js'
-import type { Database } from '../domain/database.types.js'
+import type { Json } from '../domain/database.types.js'
 import { logger } from '../lib/logger.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,8 +15,6 @@ import { logger } from '../lib/logger.js'
 // DIENTE §9 "sin evidencia no entra al triage": se exige evidencia NO vacia en el
 // schema (espeja el CHECK jsonb_array_length(evidencia) > 0 de la migracion 104).
 // ─────────────────────────────────────────────────────────────────────────────
-
-export type SuggestionInsert = Database['ai']['Tables']['suggestions']['Insert']
 
 export const PropuestaSchema = z.object({
   tipo: z.enum(['contenido', 'codigo']),
@@ -41,27 +39,24 @@ export type Propuesta = z.infer<typeof PropuestaSchema>
 export async function registrarPropuesta(db: Db, entrada: Propuesta): Promise<{ id: string }> {
   const p = PropuestaSchema.parse(entrada)
 
-  const insert: SuggestionInsert = {
-    tipo: p.tipo,
-    origen: p.origen,
-    problema: p.problema,
-    evidencia: p.evidencia as Database['ai']['Tables']['suggestions']['Insert']['evidencia'],
-    cambio_sugerido: p.cambio_sugerido,
-    dueno: p.dueno ?? null,
-    metrica_esperada: p.metrica_esperada ?? null,
-    impacto_esperado: p.impacto_esperado ?? null,
-  }
-
-  const { data, error } = await db
-    .schema('ai')
-    .from('suggestions')
-    .insert(insert)
-    .select('id')
-    .single()
+  // ai.suggestions esta OCULTO a PostgREST → se escribe por el contrato api (mig 108):
+  // api.suggestions_registrar_v1 (invoker) → private.intel_suggestion_v1 (definer). El
+  // CHECK jsonb_array_length(evidencia)>0 de la mig 104 frena evidencia vacia en la DB.
+  const { data, error } = await db.schema('api').rpc('suggestions_registrar_v1', {
+    p_tipo: p.tipo,
+    p_origen: p.origen,
+    p_problema: p.problema,
+    p_evidencia: p.evidencia as Json,
+    p_cambio_sugerido: p.cambio_sugerido,
+    p_dueno: p.dueno ?? null,
+    p_metrica_esperada: p.metrica_esperada ?? null,
+    p_impacto_esperado: p.impacto_esperado ?? null,
+  })
 
   if (error) {
     throw new Error(`No se pudo registrar la propuesta: ${error.message}`)
   }
-  logger.info({ suggestionId: data.id, tipo: p.tipo, origen: p.origen }, 'Propuesta registrada')
-  return { id: data.id }
+  const id = data as string
+  logger.info({ suggestionId: id, tipo: p.tipo, origen: p.origen }, 'Propuesta registrada')
+  return { id }
 }
