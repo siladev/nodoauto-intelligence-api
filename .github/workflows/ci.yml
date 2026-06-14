@@ -1,6 +1,9 @@
-# CI de nodoauto-intelligence-api (ADR-005 F3). Servicio Node desplegable en Coolify:
-# 3 gates como la PWA — tsc + test + build. Sin promocion a deploy aca (Coolify
-# despliega desde su propio pipeline). Node pinneado a produccion (ADR-004).
+# CI de nodoauto-intelligence-api (ADR-005 F3). Mismo patron que la PWA: 3 gates
+# (tsc + test + build) + promocion a `production` (la rama que Coolify auto-despliega).
+# Flujo: PR → Merge a `main` → CI verde → fast-forward de `production` → webhook
+# GitHub→Coolify → docker build (Dockerfile) → rolling. Si un gate falla, `production`
+# NO avanza y prod queda intacto. Node pinneado a produccion (ADR-004).
+# Runbook: docs/runbooks/deploy-coolify.md
 name: CI
 
 on:
@@ -37,3 +40,21 @@ jobs:
 
       - name: Gate 3 — Build (tsc -> dist)
         run: npm run build
+
+  promote:
+    name: Promover a production (deploy)
+    needs: gates
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Fast-forward only (sin --force): si production divergio, esto falla a
+      # proposito — resolver a mano. El push dispara el webhook GitHub→Coolify que
+      # despliega. La primera corrida CREA `production` desde el SHA verificado de main.
+      - name: Fast-forward production al SHA verificado
+        run: git push origin HEAD:production
