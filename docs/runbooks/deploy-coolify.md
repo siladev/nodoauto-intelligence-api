@@ -4,9 +4,10 @@ Pasos para dejar el servicio **operativo y funcional** en el VPS (Coolify v4 + T
 Cloudflare Full Strict), igual que la PWA (ADR-004). El servicio buildea desde su
 `Dockerfile` (multi-stage, Node 24.12, healthcheck en `/health`).
 
-> **Orden recomendado:** 0 (seed DB — bloqueante) → 1 (DNS) → 2 (Coolify app + env) →
-> 3 (dominio/SSL) → 4 (smoke test). Sin el paso 0 el deploy "anda" (responde 202) pero
-> **cada análisis cae a `fallido`** por falta de routing.
+> **Orden recomendado:** 0 (seed DB — bloqueante) → 1 (DNS Cloudflare) → 2 (acceso GitHub
+> App) → 3 (app Coolify) → 4 (env) → 5 (dominio/SSL) → 6 (smoke test). El deploy es
+> **PR → Merge → Coolify** (no push directo). Sin el paso 0 el deploy "anda" (responde 202)
+> pero **cada análisis cae a `fallido`** por falta de routing.
 
 ---
 
@@ -57,42 +58,75 @@ Tras aplicar, refrescar el baseline de `nodoauto-database` (las filas seed entra
 
 ## 1. DNS — `intelligence.nodoauto.com` (Cloudflare)
 
-En el panel Cloudflare del dominio `nodoauto.com`:
+Panel: **dash.cloudflare.com → dominio `nodoauto.com` → DNS → Records**.
 
-- Registro **A** (o **CNAME** al host del VPS) `intelligence` → IP del VPS (la misma que
-  sirve la PWA).
-- **Proxied (nube naranja) ON** — mantiene Cloudflare adelante (Full Strict + las reglas
-  anti-bot ya vigentes, ver [[cloudflare-cache-y-bots]] / [[vps-hardening]]).
-- TTL Auto.
+1. **Primero copiá la IP del VPS** de un registro existente que ya apunte al VPS (el de la
+   PWA, p. ej. el `A` de `@`/`nodoauto.com` o `www`). Anotá ese IPv4.
+2. **Add record:**
+   - **Type:** `A`
+   - **Name:** `intelligence` (Cloudflare lo expande a `intelligence.nodoauto.com`)
+   - **IPv4 address:** la IP del VPS del paso 1
+   - **Proxy status:** **Proxied** (nube naranja) — mantiene CF Full Strict + reglas
+     anti-bot vigentes (ver [[cloudflare-cache-y-bots]] / [[vps-hardening]])
+   - **TTL:** Auto
+   - **Save**
 
 El firewall del VPS solo acepta tráfico de Cloudflare (CF-only); al ir proxied, el
-subdominio entra por el mismo camino que la PWA. No abrir puertos nuevos.
+subdominio entra por el mismo camino que la PWA. **No abrir puertos nuevos.**
 
 ---
 
-## 2. Coolify — crear la aplicación
+## 2. GitHub — dar acceso del repo al GitHub App de Coolify (repo privado)
 
-1. **New Resource → Application → Public Repository** (o GitHub App) apuntando a
-   `github.com/siladev/nodoauto-intelligence-api`, branch **`main`** (o `production` si
-   se replica el patrón de la PWA; ver más abajo).
-2. **Build Pack: Dockerfile** (el repo ya trae `Dockerfile` multi-stage + `.dockerignore`).
-   No usar Nixpacks.
-3. **Port (Ports Exposes): `8787`** — el server escucha en `PORT` (default 8787).
-4. **Health Check:** path `/health`, puerto `8787` (el Dockerfile ya define un
-   `HEALTHCHECK` interno contra `/health`; Coolify puede usar el suyo además).
-5. **Deploy on push:** activar el webhook como en la PWA (push a la branch desplegable →
-   build + deploy zero-downtime). Ver [[project_pipeline_deploy]].
+El repo es **privado**, así que Coolify necesita acceso vía su **GitHub App** (la misma que
+ya usa la PWA). El flujo de deploy es **PR → Merge → Coolify** (no push directo a una rama
+de tarea): Coolify observa la rama integrada y despliega cuando esa rama avanza por un merge.
 
-### Branch desplegable (`main` vs `production`)
+**Cómo CHEQUEAR qué usa la PWA hoy (para replicar exactamente):**
+- Coolify → abrí la aplicación de la **PWA** → pestaña **Configuration → General / Source**.
+  Mirá el campo **Source** (dice `GitHub App: <nombre>` o `Deploy Key`) y el campo
+  **Branch** (qué rama observa: `main` o `production`).
+- O en el sidebar de Coolify → **Sources** → ahí figura el/los GitHub App instalados.
 
-La PWA despliega desde `production` (puntero movido por el CI). Para el primer arranque
-del servicio podés desplegar directo desde `main`. Si querés el mismo patrón trunk-based
-(CI mueve `production`), replicá el workflow de promoción del repo de la PWA en una
-sesión aparte — no es necesario para dejarlo funcionando hoy.
+**Dar acceso al repo nuevo (si el GitHub App NO está en "All repositories"):**
+- GitHub → tu avatar → **Settings → Applications → Installed GitHub Apps** → el app de
+  Coolify → **Configure** → **Repository access** → **Only select repositories** → agregá
+  `siladev/nodoauto-intelligence-api` → **Save**. (Si está en "All repositories", ya tiene
+  acceso y no hay que tocar nada.)
 
 ---
 
-## 3. Variables de entorno (Coolify → Environment Variables)
+## 3. Coolify — crear la aplicación
+
+1. **New Resource → Application → Private Repository (with GitHub App)** → elegí el **mismo
+   GitHub App** que la PWA → repo `siladev/nodoauto-intelligence-api`.
+2. **Branch:** la **misma rama que observa la PWA** (lo viste en el paso 2). Si la PWA usa
+   `production`, ver la nota de abajo; si usa `main`, poné `main`.
+3. **Build Pack: Dockerfile** (el repo trae `Dockerfile` multi-stage + `.dockerignore`).
+   **No** usar Nixpacks.
+4. **Port (Ports Exposes): `8787`** — el server escucha en `PORT` (default 8787).
+5. **Health Check:** path `/health`, puerto `8787` (el Dockerfile ya define un
+   `HEALTHCHECK` interno; Coolify puede usar el suyo además).
+6. **Auto Deploy: ON** — Coolify recibe el webhook del GitHub App y, al avanzar la rama
+   observada (por un **merge** de PR), buildea y despliega zero-downtime. Ver
+   [[project_pipeline_deploy]].
+
+### Rama observada — `main` vs `production`
+
+Como el deploy es PR → Merge → Coolify, alcanza con que Coolify observe la rama a la que
+mergeás:
+- **Si la PWA observa `main`:** poné `main`. Mergeás el PR a `main` → Coolify despliega.
+  (El andamiaje fundacional ya está en `main`; para el **primer** deploy, si no hay un merge
+  nuevo, usá el botón **Deploy** manual de Coolify una vez.)
+- **Si la PWA observa `production`** (puntero movido por el CI tras pasar los gates): este
+  repo hoy solo tiene `main`. Para replicarlo hay que crear la rama `production` + el
+  workflow de promoción del CI (como la PWA). Es una mejora opcional para que los gates
+  bloqueen el deploy; **no** es necesaria para dejarlo funcionando hoy — empezá observando
+  `main` y migrá a `production` en una sesión aparte si querés el gateo por CI.
+
+---
+
+## 4. Variables de entorno (Coolify → Environment Variables)
 
 Cargar como **secrets** (no en el repo). Ver `.env.example`. El boot valida y **falla
 rápido** si falta alguna (`src/config/env.ts`):
@@ -119,7 +153,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 ---
 
-## 4. Dominio + SSL en Coolify
+## 5. Dominio + SSL en Coolify
 
 1. En la app → **Domains**: `https://intelligence.nodoauto.com`.
 2. Coolify genera la label de Traefik y el cert (Let's Encrypt / o el modo que use la PWA
@@ -129,7 +163,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 
 ---
 
-## 5. Smoke test (post-deploy)
+## 6. Smoke test (post-deploy)
 
 **a) Salud (sin auth):**
 
@@ -184,7 +218,7 @@ es que falte el paso 0 (seed de routing) o las env (`ANTHROPIC_API_KEY`).
 
 ---
 
-## 6. Degradación (verificación de diseño)
+## 7. Degradación (verificación de diseño)
 
 Apagar el servicio en Coolify y repetir la query del paso 5e: la lectura por
 `api.analisis_caso_v1` **sigue respondiendo** (con el `status` del último job). El servicio
@@ -192,7 +226,7 @@ Apagar el servicio en Coolify y repetir la query del paso 5e: la lectura por
 
 ---
 
-## 7. Pendiente posterior (no bloquea el deploy)
+## 8. Pendiente posterior (no bloquea el deploy)
 
 - **F4:** la PWA consume `api.analisis_caso_v1` server-side, reemplaza `/api/analizar-caso`
   y **saca `ANTHROPIC_API_KEY` de su env** (pasa a vivir solo acá). Sesión aparte.
