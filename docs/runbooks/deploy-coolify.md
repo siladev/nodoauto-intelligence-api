@@ -100,8 +100,10 @@ de tarea): Coolify observa la rama integrada y despliega cuando esa rama avanza 
 
 1. **New Resource → Application → Private Repository (with GitHub App)** → elegí el **mismo
    GitHub App** que la PWA → repo `siladev/nodoauto-intelligence-api`.
-2. **Branch:** la **misma rama que observa la PWA** (lo viste en el paso 2). Si la PWA usa
-   `production`, ver la nota de abajo; si usa `main`, poné `main`.
+2. **Branch:** **`production`** (igual que la PWA: el CI mueve `production` tras pasar los
+   gates; ver "Flujo de producción" abajo). ⚠️ Cambiá la branch a `production` recién cuando
+   el CI haya creado esa rama (primer merge a `main` con el job `promote`), si no Coolify
+   observa una rama que aún no existe.
 3. **Build Pack: Dockerfile** (el repo trae `Dockerfile` multi-stage + `.dockerignore`).
    **No** usar Nixpacks.
 4. **Port (Ports Exposes): `8787`** — el server escucha en `PORT` (default 8787).
@@ -111,18 +113,30 @@ de tarea): Coolify observa la rama integrada y despliega cuando esa rama avanza 
    observada (por un **merge** de PR), buildea y despliega zero-downtime. Ver
    [[project_pipeline_deploy]].
 
-### Rama observada — `main` vs `production`
+### Flujo de producción (idéntico a la PWA, `docs/runbooks/deploy.md` del repo PWA)
 
-Como el deploy es PR → Merge → Coolify, alcanza con que Coolify observe la rama a la que
-mergeás:
-- **Si la PWA observa `main`:** poné `main`. Mergeás el PR a `main` → Coolify despliega.
-  (El andamiaje fundacional ya está en `main`; para el **primer** deploy, si no hay un merge
-  nuevo, usá el botón **Deploy** manual de Coolify una vez.)
-- **Si la PWA observa `production`** (puntero movido por el CI tras pasar los gates): este
-  repo hoy solo tiene `main`. Para replicarlo hay que crear la rama `production` + el
-  workflow de promoción del CI (como la PWA). Es una mejora opcional para que los gates
-  bloqueen el deploy; **no** es necesaria para dejarlo funcionando hoy — empezá observando
-  `main` y migrá a `production` en una sesión aparte si querés el gateo por CI.
+```
+PR → Merge a `main`
+  └─ GitHub Actions (.github/workflows/ci.yml)
+       job `gates`:   tsc · test · build
+       job `promote`: si gates verde Y push a main → git push origin HEAD:production
+            └─ webhook GitHub → Coolify (rama `production`)
+                 └─ docker build (Dockerfile) → health check `/health` → rolling swap
+```
+
+Si cualquier gate falla, `production` no avanza y prod queda intacto. El job `promote`
+hace **fast-forward only** (sin `--force`): si `production` divergió, falla a propósito.
+
+**Puesta en marcha (una vez):**
+1. Mergear a `main` el PR que agrega el job `promote` al CI (rama `feat/ci-promote-production`).
+   Ese merge dispara el CI; el job `promote` **crea `production`** desde el SHA verificado.
+2. (Recomendado) GitHub → Settings → Branches → regla para `production` que **bloquee
+   pushes manuales** (solo el workflow de Actions la mueve). Igual que la PWA.
+3. En Coolify, poné la **branch monitoreada = `production`** (paso 3.2 de arriba). Auto Deploy ON.
+
+A partir de ahí: PR → Merge a `main` → gates verdes → `production` avanza sola → Coolify
+despliega. Rollback: Coolify → Deployments → *Redeploy* de la imagen anterior, o
+`git push origin <SHA-anterior>:production --force-with-lease`.
 
 ---
 
