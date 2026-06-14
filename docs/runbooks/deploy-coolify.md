@@ -134,8 +134,10 @@ de tarea): Coolify observa la rama integrada y despliega cuando esa rama avanza 
 3. **Build Pack: Dockerfile** (el repo trae `Dockerfile` multi-stage + `.dockerignore`).
    **No** usar Nixpacks.
 4. **Port (Ports Exposes): `8787`** — el server escucha en `PORT` (default 8787).
-5. **Health Check:** path `/health`, puerto `8787` (el Dockerfile ya define un
-   `HEALTHCHECK` interno; Coolify puede usar el suyo además).
+5. **Health Check:** el Dockerfile ya define un `HEALTHCHECK` (`wget` a `/health`, base
+   **alpine** como la PWA) → Coolify muestra *healthy* solo. Opcional, idéntico a la PWA:
+   habilitar el del panel (Type HTTP, GET, http, host `127.0.0.1`, **Port 8787**, **Path
+   `/health`**, Return Code 200).
 6. **Auto Deploy: ON** — Coolify recibe el webhook del GitHub App y, al avanzar la rama
    observada (por un **merge** de PR), buildea y despliega zero-downtime. Ver
    [[project_pipeline_deploy]].
