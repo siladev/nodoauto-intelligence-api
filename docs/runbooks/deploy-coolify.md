@@ -4,10 +4,37 @@ Pasos para dejar el servicio **operativo y funcional** en el VPS (Coolify v4 + T
 Cloudflare Full Strict), igual que la PWA (ADR-004). El servicio buildea desde su
 `Dockerfile` (multi-stage, Node 24.12, healthcheck en `/health`).
 
-> **Orden recomendado:** 0 (seed DB — bloqueante) → 1 (DNS Cloudflare) → 2 (acceso GitHub
-> App) → 3 (app Coolify) → 4 (env) → 5 (dominio/SSL) → 6 (smoke test). El deploy es
-> **PR → Merge → Coolify** (no push directo). Sin el paso 0 el deploy "anda" (responde 202)
-> pero **cada análisis cae a `fallido`** por falta de routing.
+## Modelo mental (cómo "sube" el repo y de dónde sale el contenedor)
+
+- El repo **ya está en GitHub** (`siladev/nodoauto-intelligence-api`). Coolify **clona
+  desde GitHub** — no se "sube" el repo a Coolify ni se pushea una imagen a un registry.
+- **No se pre-construye una imagen ni se "crea el contenedor" como paso aparte.** En Coolify
+  se crea una **Application** conectada al repo con Build Pack **Dockerfile**; en cada deploy
+  Coolify hace `docker build` desde el `Dockerfile` del repo (en el VPS) y corre el contenedor.
+  Por eso no hace falta Docker local.
+
+## Secuencia recomendada (de-risked: verificar el contenedor antes del pipeline)
+
+Crear y **verificar** la app en Coolify apuntando a `main` (que ya existe) ANTES de mergear
+el PR de producción. Así probás que la imagen buildea y el contenedor levanta sano, y recién
+después atás el pipeline `production`:
+
+1. **GitHub App** → dar acceso al repo (§2). Sin esto Coolify no lo ve.
+2. **Coolify → New Application** desde el repo, **branch `main`**, Dockerfile, puerto 8787,
+   healthcheck `/health` (§3).
+3. **Env** (los 4 secrets + PORT/NODE_ENV, §4). El contenedor **no levanta sin ellos**
+   (validación fail-fast al boot).
+4. **Deploy manual** en Coolify → verificar build OK y `/health` 200 (prueba el contenedor
+   de punta a punta, sin tocar el pipeline todavía).
+5. **Mergear el PR** `feat/ci-promote-production` → el job `promote` **crea `production`**.
+6. **Coolify:** cambiar branch monitoreada a **`production`** + Auto Deploy ON (+ branch
+   protection en `production`). Ver "Flujo de producción" en §3.
+7. **Cloudflare** subdominio (§1) + **dominio** en Coolify (§5).
+8. **Seed routing** (§0, bloqueante para el análisis) → **smoke test** (§6) → degradación (§7).
+
+> **Bloqueante a no olvidar:** sin el seed de `ai.modelos`/`ai.routing` (§0) el deploy "anda"
+> (responde 202 y `/health` 200) pero **cada análisis cae a `fallido`** por falta de routing.
+> El `/health` y la verificación del contenedor (paso 4) NO dependen del seed.
 
 ---
 
