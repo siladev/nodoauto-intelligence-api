@@ -178,16 +178,114 @@ class FakeQuery implements PromiseLike<Resultado> {
   }
 }
 
+// Emulacion de los contratos `api.*_v1` (mig 108): wrappers invoker → puentes private
+// definer que tocan `ai`. El servicio ya NO toca ai.* directo; va por `.schema('api').
+// rpc(...)`. Este fake reproduce la SEMANTICA de cada funcion SQL (idempotencia,
+// transicion atomica, upsert+cierre) contra el mismo `estado` en memoria, asi las
+// aserciones de los tests (estado.jobs / estado.analisis_caso) siguen valiendo.
+async function ejecutarRpc(
+  estado: FakeState,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<Resultado> {
+  const ahora = () => new Date().toISOString()
+  switch (name) {
+    case 'analisis_encolar_job_v1': {
+      const casoId = args.p_caso_id as string
+      const tipo = (args.p_tipo as string) || 'analisis_caso'
+      const existente = estado.jobs.find((j) => j.caso_id === casoId && j.tipo === tipo)
+      if (existente) return { data: [{ ...existente, creado: false }], error: null }
+      const fila = aplicarDefaults('jobs', { caso_id: casoId, tipo, status: 'pendiente' })
+      estado.jobs.push(fila)
+      return { data: [{ ...fila, creado: true }], error: null }
+    }
+    case 'analisis_tomar_job_v1': {
+      const job = estado.jobs.find((j) => j.id === args.p_job_id && j.status === 'pendiente')
+      if (!job) return { data: [], error: null }
+      job.status = 'procesando'
+      job.started_at = ahora()
+      return {
+        data: [{ id: job.id, caso_id: job.caso_id, tipo: job.tipo, intentos: job.intentos }],
+        error: null,
+      }
+    }
+    case 'analisis_routing_v1': {
+      const tipo = args.p_tipo_tarea as string
+      return { data: estado.routing.filter((r) => r.tipo_tarea === tipo && r.activo), error: null }
+    }
+    case 'analisis_modelos_v1':
+      return { data: estado.modelos, error: null }
+    case 'analisis_guardar_v1': {
+      const casoId = args.p_caso_id as string
+      const campos: Row = {
+        job_id: args.p_job_id,
+        resumen: args.p_resumen,
+        diagnostico: args.p_diagnostico,
+        severidad: args.p_severidad,
+        confianza: args.p_confianza,
+        hallazgos: args.p_hallazgos ?? [],
+        modelo_usado: args.p_modelo_usado,
+        tokens_total: args.p_tokens_total,
+      }
+      const existente = estado.analisis_caso.find((a) => a.caso_id === casoId)
+      if (existente) Object.assign(existente, campos, { updated_at: ahora() })
+      else estado.analisis_caso.push(aplicarDefaults('analisis_caso', { caso_id: casoId, ...campos }))
+      const job = estado.jobs.find((j) => j.id === args.p_job_id)
+      if (job)
+        Object.assign(job, {
+          status: 'listo',
+          modelo_usado: args.p_modelo_usado,
+          tokens_in: args.p_tokens_in,
+          tokens_out: args.p_tokens_out,
+          costo_usd: args.p_costo_usd,
+          error: null,
+          finished_at: ahora(),
+        })
+      return { data: null, error: null }
+    }
+    case 'analisis_fallar_job_v1': {
+      const job = estado.jobs.find((j) => j.id === args.p_job_id)
+      if (job)
+        Object.assign(job, {
+          status: 'fallido',
+          intentos: args.p_intentos,
+          error: String(args.p_error ?? '').slice(0, 2000),
+          finished_at: ahora(),
+        })
+      return { data: null, error: null }
+    }
+    case 'suggestions_registrar_v1': {
+      const fila = aplicarDefaults('suggestions', {
+        tipo: args.p_tipo,
+        origen: args.p_origen,
+        problema: args.p_problema,
+        evidencia: args.p_evidencia ?? [],
+        cambio_sugerido: args.p_cambio_sugerido,
+        dueno: args.p_dueno ?? null,
+        metrica_esperada: args.p_metrica_esperada ?? null,
+        impacto_esperado: args.p_impacto_esperado ?? null,
+      })
+      estado.suggestions.push(fila)
+      return { data: fila.id, error: null }
+    }
+    default:
+      return { data: null, error: { message: `rpc no soportado en el fake: ${name}` } }
+  }
+}
+
 class FakeSchema {
   constructor(private readonly estado: FakeState) {}
   from(tabla: keyof FakeState): FakeQuery {
     return new FakeQuery(this.estado, tabla)
   }
+  rpc(name: string, args: Record<string, unknown> = {}): Promise<Resultado> {
+    return ejecutarRpc(this.estado, name, args)
+  }
 }
 
 class FakeClient {
   constructor(private readonly estado: FakeState) {}
-  schema(_name: 'ai'): FakeSchema {
+  schema(_name: 'ai' | 'api'): FakeSchema {
     return new FakeSchema(this.estado)
   }
   from(tabla: keyof FakeState): FakeQuery {
