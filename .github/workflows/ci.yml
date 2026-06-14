@@ -1,0 +1,39 @@
+# CI de nodoauto-intelligence-api (ADR-005 F3). Servicio Node desplegable en Coolify:
+# 3 gates como la PWA — tsc + test + build. Sin promocion a deploy aca (Coolify
+# despliega desde su propio pipeline). Node pinneado a produccion (ADR-004).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Gates (tsc + test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.12.0
+          cache: npm
+
+      - run: npm ci
+
+      - name: Gate 1 — TypeScript (tsc --noEmit)
+        run: npm run typecheck
+
+      - name: Gate 2 — Tests (vitest)
+        run: npm run test
+
+      - name: Gate 3 — Build (tsc -> dist)
+        run: npm run build

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+
+# Secretos por env — NUNCA se commitean (ADR-005 §3: secreto en modulo server-only).
+.env
+.env.*
+!.env.example

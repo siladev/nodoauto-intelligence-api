@@ -1,0 +1,9 @@
+# Normalizacion de fin de linea: LF en todo el repo (igual que nodoauto-database).
+# Evita drift de CRLF en Windows/OneDrive y mantiene estables los hashes de archivos
+# sensibles (lockfile, contratos copiados). No se usa scripts de reescritura masiva.
+* text=auto eol=lf
+
+# Binarios y assets que no deben tocarse.
+*.png binary
+*.jpg binary
+*.ico binary

@@ -1,0 +1,33 @@
+{
+  "name": "nodoauto-intelligence-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Servicio de inteligencia de NODO AUTO (ADR-005 F3 / ADR-006). Recibe comandos de analisis (POST /v1/analizar -> 202), elige modelo por ai.routing y escribe el resultado en ai.* via service_role. NO devuelve el analisis: la PWA lo lee por el contrato api.analisis_caso_v1. Detecta y propone, no aplica.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.12.0 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "@hono/node-server": "^1.13.7",
+    "@supabase/supabase-js": "^2.102.1",
+    "hono": "^4.6.14",
+    "pino": "^9.5.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5",
+    "vitest": "^2.0.0"
+  }
+}
