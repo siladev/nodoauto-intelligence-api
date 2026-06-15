@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { encolarJob, procesarJob } from '../../src/services/jobs.js'
+import { encolarJob, reencolarJob, procesarJob } from '../../src/services/jobs.js'
 import type { Inferencia } from '../../src/lib/anthropic.js'
 import { fakeDb, nuevoEstado, type FakeState } from '../helpers/fakeDb.js'
 
@@ -74,6 +74,71 @@ describe('encolarJob — idempotencia por (caso_id, tipo)', () => {
     expect(segundo.job.id).toBe(primero.job.id)
 
     expect(estado.jobs).toHaveLength(1)
+  })
+})
+
+describe('reencolarJob — re-analisis controlado (ADR-006)', () => {
+  it('reintenta un job `fallido`: lo resetea a `pendiente`, limpia error y suma intentos', async () => {
+    const estado = estadoConCatalogo()
+    const db = fakeDb(estado)
+    const { job } = await encolarJob(db, CASO, 'analisis_caso')
+
+    // Lo dejamos `fallido` (como el caso real d6adcf00 con max_tokens_out=1024).
+    const fallo = await procesarJob(db, async () => ({ texto: 'no json', tokensIn: 1, tokensOut: 1 }), job.id)
+    expect(fallo.status).toBe('fallido')
+    expect(estado.jobs[0].intentos).toBe(1)
+
+    const r = await reencolarJob(db, CASO, 'analisis_caso')
+    expect(r.reencolado).toBe(true)
+    expect(r.job.id).toBe(job.id)
+    expect(r.job.status).toBe('pendiente')
+    expect(estado.jobs).toHaveLength(1)
+    expect(estado.jobs[0].status).toBe('pendiente')
+    expect(estado.jobs[0].error).toBeNull()
+    expect(estado.jobs[0].finished_at).toBeNull()
+    expect(estado.jobs[0].intentos).toBe(2)
+
+    // Y ahora SI se puede reprocesar (con el bug ya corregido).
+    const ok = await procesarJob(db, inferirOk, job.id)
+    expect(ok.status).toBe('listo')
+    expect(estado.jobs[0].status).toBe('listo')
+  })
+
+  it('re-analiza un job `listo` (tras mejorar prompt/modelo): vuelve a `pendiente`', async () => {
+    const estado = estadoConCatalogo()
+    const db = fakeDb(estado)
+    const { job } = await encolarJob(db, CASO, 'analisis_caso')
+    await procesarJob(db, inferirOk, job.id)
+    expect(estado.jobs[0].status).toBe('listo')
+
+    const r = await reencolarJob(db, CASO, 'analisis_caso')
+    expect(r.reencolado).toBe(true)
+    expect(estado.jobs[0].status).toBe('pendiente')
+    expect(estado.jobs[0].modelo_usado).toBeNull()
+    expect(estado.jobs[0].tokens_in).toBeNull()
+  })
+
+  it('crea el job si todavia no existe (se comporta como encolar)', async () => {
+    const estado = estadoConCatalogo()
+    const db = fakeDb(estado)
+
+    const r = await reencolarJob(db, CASO, 'analisis_caso')
+    expect(r.reencolado).toBe(true)
+    expect(r.job.status).toBe('pendiente')
+    expect(estado.jobs).toHaveLength(1)
+  })
+
+  it('NO pisa un job en vuelo: si esta `procesando`, es no-op (reencolado=false)', async () => {
+    const estado = estadoConCatalogo()
+    const db = fakeDb(estado)
+    const { job } = await encolarJob(db, CASO, 'analisis_caso')
+    // Simular un job tomado por un worker (en vuelo).
+    estado.jobs[0].status = 'procesando'
+
+    const r = await reencolarJob(db, CASO, 'analisis_caso')
+    expect(r.reencolado).toBe(false)
+    expect(r.job.id).toBe(job.id)
+    expect(estado.jobs[0].status).toBe('procesando')
   })
 })
 
