@@ -236,6 +236,22 @@ curl -s -X POST https://intelligence.nodoauto.com/v1/analizar \
 # (un segundo POST idéntico → "idempotente":true, mismo job_id)
 ```
 
+> **Desde DENTRO del contenedor (Coolify → app `intelligence` → Terminal):** los ejemplos
+> de arriba usan `curl`, que **NO está en la imagen** (Alpine) — daría `sh: curl: not found`.
+> Adentro, pegale con el `node` del propio runtime (lee `PORT` y `SERVICE_SHARED_TOKEN` de la
+> env, así nunca copiás el secreto ni dependés de TLS/DNS):
+>
+> ```sh
+> node -e 'const p=process.env.PORT||8787; fetch(`http://127.0.0.1:${p}/v1/analizar`,{method:"POST",headers:{authorization:"Bearer "+process.env.SERVICE_SHARED_TOKEN,"content-type":"application/json"},body:JSON.stringify({caso_id:"d6adcf00-eabc-4eb9-b6b6-e015bb8fe653",reanalizar:true})}).then(r=>r.text().then(t=>console.log(r.status,t))).catch(e=>console.log("ERR",e.message))'
+> # → 202 {"job_id":"...","status":"pendiente","idempotente":false}
+> ```
+>
+> El `"reanalizar":true` del body es el **RE-ANÁLISIS controlado** (mig 111 + contrato
+> `api.analisis_reencolar_v1`): re-encola un job ya existente (resetea a `pendiente`, suma
+> `intentos`) salvo que esté `procesando`. Es la vía para reintentar un `fallido` o re-correr
+> un `listo` tras mejorar prompt/modelo. **Sin** el flag, el comando sigue idempotente por
+> `(caso_id, tipo)` y no reprocesa.
+
 **d) Verificar el resultado del lado DB (MCP solo-lectura o panel):**
 
 ```sql
