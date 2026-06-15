@@ -230,6 +230,28 @@ export interface Database {
           creado: boolean
         }>
       }
+      // RE-ANALISIS controlado (mig 111): re-encola el job (reset a `pendiente` salvo que
+      // este `procesando`). Misma forma de fila que encolar, con `reencolado` en vez de `creado`.
+      analisis_reencolar_v1: {
+        Args: { p_caso_id: string; p_tipo: string }
+        Returns: Array<{
+          id: string
+          caso_id: string
+          tipo: string
+          status: JobStatus
+          modelo_usado: string | null
+          tokens_in: number | null
+          tokens_out: number | null
+          costo_usd: number | null
+          intentos: number
+          error: string | null
+          created_at: string
+          updated_at: string
+          started_at: string | null
+          finished_at: string | null
+          reencolado: boolean
+        }>
+      }
       analisis_tomar_job_v1: {
         Args: { p_job_id: string }
         Returns: Array<{ id: string; caso_id: string; tipo: string; intentos: number }>

@@ -199,6 +199,36 @@ async function ejecutarRpc(
       estado.jobs.push(fila)
       return { data: [{ ...fila, creado: true }], error: null }
     }
+    case 'analisis_reencolar_v1': {
+      // Espeja private.intel_reencolar_v1 (mig 111): INSERT ... ON CONFLICT (caso_id,tipo)
+      // DO UPDATE ... WHERE status <> 'procesando'. No existe → crea pendiente. Existe y
+      // no `procesando` → resetea a pendiente (limpia error/tiempos/metricas, +intentos).
+      // `procesando` → no-op, reencolado=false.
+      const casoId = args.p_caso_id as string
+      const tipo = (args.p_tipo as string) || 'analisis_caso'
+      const existente = estado.jobs.find((j) => j.caso_id === casoId && j.tipo === tipo)
+      if (!existente) {
+        const fila = aplicarDefaults('jobs', { caso_id: casoId, tipo, status: 'pendiente' })
+        estado.jobs.push(fila)
+        return { data: [{ ...fila, reencolado: true }], error: null }
+      }
+      if (existente.status === 'procesando') {
+        return { data: [{ ...existente, reencolado: false }], error: null }
+      }
+      Object.assign(existente, {
+        status: 'pendiente',
+        error: null,
+        started_at: null,
+        finished_at: null,
+        modelo_usado: null,
+        tokens_in: null,
+        tokens_out: null,
+        costo_usd: null,
+        intentos: (existente.intentos as number) + 1,
+        updated_at: ahora(),
+      })
+      return { data: [{ ...existente, reencolado: true }], error: null }
+    }
     case 'analisis_tomar_job_v1': {
       const job = estado.jobs.find((j) => j.id === args.p_job_id && j.status === 'pendiente')
       if (!job) return { data: [], error: null }

@@ -11,6 +11,8 @@ import { logger } from '../lib/logger.js'
 //
 //   encolarJob   → IDEMPOTENTE por (caso_id, tipo): un retry del POST /v1/analizar
 //                  NO duplica trabajo. Si ya existe el job, lo devuelve tal cual.
+//   reencolarJob → RE-ANALISIS controlado: resetea el job a `pendiente` (salvo que este
+//                  `procesando`) para reintentar un `fallido` o re-correr un `listo`.
 //   procesarJob  → toma un job `pendiente`, elige modelo por ai.routing, infiere,
 //                  valida, escribe ai.analisis_caso + cierra el job en `listo`
 //                  (o `fallido` con motivo server-side). Maquina de estados:
@@ -59,6 +61,44 @@ export async function encolarJob(
   }
   const { creado, ...job } = fila
   return { job, creado }
+}
+
+export interface ResultadoReencolar {
+  job: JobRow
+  /**
+   * true si el job quedo `pendiente` para (re)procesar — porque no existia o porque se
+   * reseteo desde `pendiente`/`listo`/`fallido`. false si estaba `procesando` (no-op: no
+   * se pisa un job en vuelo), en cuyo caso `job` es el job tal cual, sin tocar.
+   */
+  reencolado: boolean
+}
+
+/**
+ * RE-ANALISIS controlado (ADR-006): re-encola el job de (caso_id, tipo) para volver a
+ * procesarlo. Si no existe, lo crea. Si existe y NO esta `procesando`, lo resetea a
+ * `pendiente` (limpia error/tiempos/metricas, suma `intentos`). Si esta `procesando`,
+ * es no-op y devuelve `reencolado: false`. La transicion atomica (un solo
+ * INSERT ... ON CONFLICT DO UPDATE ... WHERE status <> 'procesando') vive en el
+ * contrato SQL (mig 111); aca solo lo invocamos.
+ */
+export async function reencolarJob(
+  db: Db,
+  casoId: string,
+  tipo: TipoAnalisis,
+): Promise<ResultadoReencolar> {
+  const { data, error } = await db
+    .schema('api')
+    .rpc('analisis_reencolar_v1', { p_caso_id: casoId, p_tipo: tipo })
+
+  if (error) {
+    throw new Error(`Error reencolando job: ${error.message}`)
+  }
+  const fila = Array.isArray(data) ? data[0] : undefined
+  if (!fila) {
+    throw new Error('Reencolar job no devolvio fila')
+  }
+  const { reencolado, ...job } = fila
+  return { job, reencolado }
 }
 
 /**

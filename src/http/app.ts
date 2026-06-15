@@ -6,7 +6,7 @@ import { inferirConAnthropic, type Inferencia } from '../lib/anthropic.js'
 import { loadEnv } from '../config/env.js'
 import { AnalizarComandoSchema } from '../domain/schemas.js'
 import { reVerificarAcceso, AutorizacionError } from '../services/autorizacion.js'
-import { encolarJob, procesarJob } from '../services/jobs.js'
+import { encolarJob, reencolarJob, procesarJob } from '../services/jobs.js'
 import { logger } from '../lib/logger.js'
 import { servicioAuth } from './auth.js'
 
@@ -69,26 +69,38 @@ export function createApp(deps: AppDeps): Hono {
       return c.json({ error: 'Error procesando el comando' }, 500)
     }
 
-    // 3. Encolar idempotente por (caso_id, tipo).
-    let resultado
+    // 3. Encolar idempotente por (caso_id, tipo), o RE-ENCOLAR si el comando pide
+    //    re-analisis (resetea el job salvo que este `procesando`). `disparar` indica si
+    //    quedo un job `pendiente` para (re)procesar; idempotente = no se hizo trabajo.
+    let job
+    let disparar: boolean
     try {
-      resultado = await encolarJob(deps.db, comando.caso_id, comando.tipo)
+      if (comando.reanalizar) {
+        const r = await reencolarJob(deps.db, comando.caso_id, comando.tipo)
+        job = r.job
+        disparar = r.reencolado
+      } else {
+        const r = await encolarJob(deps.db, comando.caso_id, comando.tipo)
+        job = r.job
+        disparar = r.creado
+      }
     } catch (err) {
       logger.error({ err: err instanceof Error ? err.message : err }, 'Error encolando job')
       return c.json({ error: 'Error procesando el comando' }, 500)
     }
 
-    // 4. Solo el job recien creado dispara procesamiento (un retry no reprocesa).
-    if (resultado.creado) {
-      deps.dispararProcesamiento(resultado.job.id)
+    // 4. Solo dispara procesamiento si quedo un job pendiente (un retry idempotente, o un
+    //    reanalizar sobre un job `procesando`, NO reprocesa).
+    if (disparar) {
+      deps.dispararProcesamiento(job.id)
     }
 
     // 5. 202 + id. Nunca el analisis (se lee por api.analisis_caso_v1).
     return c.json(
       {
-        job_id: resultado.job.id,
-        status: resultado.job.status,
-        idempotente: !resultado.creado,
+        job_id: job.id,
+        status: job.status,
+        idempotente: !disparar,
       },
       202,
     )
