@@ -94,7 +94,8 @@ describe('POST /v1/analizar', () => {
     expect(body.status).toBe('pendiente')
     expect(body.idempotente).toBe(false)
     expect(disparo).toHaveBeenCalledTimes(1)
-    expect(disparo).toHaveBeenCalledWith(body.job_id)
+    // El disparo lleva la identidad del job (el pre-vuelo corre antes de tomarlo).
+    expect(disparo).toHaveBeenCalledWith({ id: body.job_id, caso_id: CASO, tipo: 'analisis_caso' })
     // NUNCA devuelve el analisis por HTTP.
     expect(JSON.stringify(body)).not.toContain('diagnostico')
   })
@@ -134,7 +135,32 @@ describe('POST /v1/analizar', () => {
     expect(b2.status).toBe('pendiente')
     expect(b2.idempotente).toBe(false)
     expect(disparo).toHaveBeenCalledTimes(2) // el primero y el reanalisis
-    expect(disparo).toHaveBeenLastCalledWith(b1.job_id)
+    expect(disparo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: b1.job_id, caso_id: CASO }),
+    )
+    expect(estado.jobs).toHaveLength(1)
+  })
+
+  it('benchmark: cada comando re-corre (siempre reencola) el MISMO job (caso_id, benchmark:<alias>)', async () => {
+    const estado = estadoConCaso()
+    const { app, disparo } = montar(estado)
+
+    const r1 = await pedir(app, { caso_id: CASO, tipo: 'benchmark:haiku' })
+    expect(r1.status).toBe(202)
+    const b1 = (await r1.json()) as { job_id: string; idempotente: boolean }
+    expect(b1.idempotente).toBe(false)
+
+    // Segundo comando: NO es idempotente-para-siempre como el analisis — re-encola.
+    const r2 = await pedir(app, { caso_id: CASO, tipo: 'benchmark:haiku' })
+    const b2 = (await r2.json()) as { job_id: string; idempotente: boolean }
+    expect(b2.job_id).toBe(b1.job_id) // misma tupla (caso_id, tipo)
+    expect(b2.idempotente).toBe(false)
+    expect(disparo).toHaveBeenCalledTimes(2)
+    expect(disparo).toHaveBeenLastCalledWith({
+      id: b1.job_id,
+      caso_id: CASO,
+      tipo: 'benchmark:haiku',
+    })
     expect(estado.jobs).toHaveLength(1)
   })
 

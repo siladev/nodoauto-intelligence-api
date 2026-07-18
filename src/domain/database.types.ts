@@ -303,6 +303,44 @@ export interface Database {
         Args: { p_job_id: string; p_intentos: number; p_error: string }
         Returns: undefined
       }
+      // ── F4.b (mig 155): grounding + presupuesto + benchmark ──────────────────
+      // Paquete de anclaje del caso en UNA llamada. jsonb con 5 claves congeladas
+      // (caso/glosario/precedentes/manual/siglas) — la forma fina se tipa/normaliza
+      // en domain/grounding.ts. NULL si el caso no existe.
+      analisis_grounding_v1: {
+        Args: { p_caso_id: string }
+        Returns: Json
+      }
+      // Techo diario del routing + gasto TOTAL del dia UTC (todos los tipos).
+      // 0 filas si no hay routing activo para el tipo de tarea.
+      analisis_presupuesto_v1: {
+        Args: { p_tipo_tarea: string }
+        Returns: Array<{
+          tipo_tarea: string
+          presupuesto_usd_dia: number | null
+          gastado_hoy: number
+          techo_alcanzado: boolean
+        }>
+      }
+      // Appendea la corrida de benchmark en ai.benchmarks + cierra su job en
+      // `listo`, atomico. NO toca ai.analisis_caso (ADR-008: el analisis vigente
+      // nunca se pisa desde un benchmark). Devuelve el id de la corrida.
+      intel_benchmark_guardar_v1: {
+        Args: {
+          p_job_id: string
+          p_caso_id: string
+          p_modelo: string
+          p_resumen: string | null
+          p_diagnostico: string | null
+          p_severidad: Severidad | null
+          p_confianza: number | null
+          p_hallazgos: Json
+          p_tokens_in: number | null
+          p_tokens_out: number | null
+          p_costo_usd: number | null
+        }
+        Returns: string
+      }
       // ── Propuestas (loop 3, §9): registra, NUNCA aplica ──────────────────────
       suggestions_registrar_v1: {
         Args: {

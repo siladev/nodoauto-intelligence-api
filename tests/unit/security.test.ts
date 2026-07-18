@@ -22,6 +22,26 @@ describe('AnalizarComandoSchema — limites estrictos', () => {
 
   it('rechaza tipos de tarea fuera de la lista permitida', () => {
     expect(() => AnalizarComandoSchema.parse({ caso_id: UUID, tipo: 'borrar_todo' })).toThrow()
+    // El tipo del JOB nunca es el tipo de tarea escalado del routing (ADR-008 §4).
+    expect(() =>
+      AnalizarComandoSchema.parse({ caso_id: UUID, tipo: 'analisis_caso_complejo' }),
+    ).toThrow()
+  })
+
+  it('acepta el tipo benchmark:<alias> (ADR-008) con alias acotado', () => {
+    const r = AnalizarComandoSchema.parse({ caso_id: UUID, tipo: 'benchmark:haiku' })
+    expect(r.tipo).toBe('benchmark:haiku')
+  })
+
+  it('rechaza benchmark con alias malformado (vacio, mayusculas, caracteres raros, largo)', () => {
+    for (const tipo of [
+      'benchmark:',
+      'benchmark:HAIKU',
+      'benchmark:haiku; drop table',
+      `benchmark:${'a'.repeat(64)}`,
+    ]) {
+      expect(() => AnalizarComandoSchema.parse({ caso_id: UUID, tipo }), tipo).toThrow()
+    }
   })
 
   it('rechaza campos extra (strict): no se cuela texto libre del cliente', () => {
