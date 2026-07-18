@@ -22,7 +22,8 @@ const SYSTEM_PROMPT = [
   '{"resumen":"string","diagnostico":"string","severidad":"info|media|critica",',
   '"confianza":number_0_a_1,"hallazgos":[{"titulo":"string","detalle":"string",',
   '"dtc":"string|null","cita":"string|null"}]}.',
-  'Maximo 10 hallazgos, ordenados de mayor a menor probabilidad.',
+  'Maximo 10 hallazgos, ordenados de mayor a menor probabilidad. En "dtc" va UN',
+  'SOLO codigo OBD-II (formato P0301) o null — nunca varios codigos ni texto.',
   'REGLA DE CITAS (obligatoria): cada hallazgo DEBE indicar en "cita" la fuente',
   'de los datos verificados en que se apoya, con el formato "[Manual <fuente>,',
   'p. <pagina>]" si sale del MANUAL OEM, "[Glosario <codigo>]" si sale del',
@@ -73,15 +74,43 @@ export function armarPrompt(caso: CasoRow, grounding: GroundingPayload | null): 
 }
 
 /**
- * Parsea y VALIDA la respuesta cruda del modelo. Lanza si no es JSON valido o no
- * cumple el schema — el caller marca el job `fallido` (nunca persiste basura).
+ * Extrae el objeto JSON de una respuesta que puede venir envuelta en fences de
+ * markdown (```json ... ```) o con preambulo/epilogo de texto — patron conocido de
+ * los modelos ante prompts largos (bug real en prod: haiku con el prompt anclado de
+ * F4.b). Determinismo simple: del primer '{' al ultimo '}'. null si no hay objeto.
+ */
+function extraerObjetoJson(texto: string): string | null {
+  const desde = texto.indexOf('{')
+  const hasta = texto.lastIndexOf('}')
+  if (desde === -1 || hasta <= desde) return null
+  return texto.slice(desde, hasta + 1)
+}
+
+/**
+ * Parsea y VALIDA la respuesta cruda del modelo. Tolera fences/preambulo alrededor
+ * del objeto (se extrae y parsea el objeto igual); si ni asi hay JSON valido o no
+ * cumple el schema, lanza CON un snippet de la respuesta en el mensaje (va a
+ * ai.jobs.error, server-side: evidencia para diagnosticar sin re-correr) — el
+ * caller marca el job `fallido` (nunca persiste basura).
  */
 export function parsearAnalisis(texto: string): AnalisisModelo {
   let json: unknown
   try {
     json = JSON.parse(texto)
   } catch {
-    throw new Error('La respuesta del modelo no es JSON valido')
+    const objeto = extraerObjetoJson(texto)
+    if (objeto === null) {
+      throw new Error(
+        `La respuesta del modelo no es JSON valido (inicio: "${sanitizeForPrompt(texto, 200)}")`,
+      )
+    }
+    try {
+      json = JSON.parse(objeto)
+    } catch {
+      throw new Error(
+        `La respuesta del modelo no es JSON valido (inicio: "${sanitizeForPrompt(texto, 200)}")`,
+      )
+    }
   }
   return AnalisisModeloSchema.parse(json)
 }

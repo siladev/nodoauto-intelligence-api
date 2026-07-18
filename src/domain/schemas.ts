@@ -65,7 +65,22 @@ export type AnalizarComando = z.infer<typeof AnalizarComandoSchema>
 // PXXXX] / [Precedente: ...]) — el system prompt la EXIGE; viaja dentro del jsonb
 // `hallazgos` existente (sin DDL). Nullable: un hallazgo sin fuente provista debe
 // declararse sin cita, no inventarla.
+//
+// `dtc`: el prompt exige UN solo codigo, pero los modelos a veces devuelven varios
+// o texto ("P0101, P0299" — bug real en prod, benchmark sonnet del caso 3776d6e9:
+// el analisis entero caia a `fallido` por un campo cosmetico). Normalizacion
+// determinista que NO inventa: se extrae el primer codigo OBD-II valido presente;
+// sin codigo → null. `.overwrite()` y no `.transform()` (quirk de Zod 4: transform
+// vuelve opcional la clave en z.infer — leccion C-80).
 // ─────────────────────────────────────────────────────────────────────────────
+const DTC_PATRON = /[PBCU][0-9]{4}/i
+
+function normalizarDtc(valor: string | null): string | null {
+  if (valor == null) return null
+  const match = DTC_PATRON.exec(valor)
+  return match ? match[0].toUpperCase() : null
+}
+
 export const AnalisisModeloSchema = z.object({
   resumen: z.string().max(2000),
   diagnostico: z.string().max(4000),
@@ -76,7 +91,7 @@ export const AnalisisModeloSchema = z.object({
       z.object({
         titulo: z.string().max(200),
         detalle: z.string().max(1000),
-        dtc: z.string().max(10).nullable().default(null),
+        dtc: z.string().max(200).nullable().default(null).overwrite(normalizarDtc),
         cita: z.string().max(300).nullable().default(null),
       }),
     )

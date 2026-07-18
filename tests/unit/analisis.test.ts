@@ -162,8 +162,39 @@ describe('parsearAnalisis', () => {
     expect(a.hallazgos[0].cita).toBeNull()
   })
 
-  it('lanza si la respuesta no es JSON', () => {
-    expect(() => parsearAnalisis('no soy json')).toThrow()
+  // Regresion del bug de prod (job bc45934b, haiku): el modelo envolvio el JSON en
+  // fences/preambulo y JSON.parse directo fallaba → job `fallido` sin evidencia.
+  it('tolera el JSON envuelto en fences de markdown', () => {
+    const a = parsearAnalisis('```json\n{"resumen":"r","diagnostico":"d"}\n```')
+    expect(a.resumen).toBe('r')
+  })
+
+  it('tolera preambulo y epilogo de texto alrededor del objeto', () => {
+    const a = parsearAnalisis(
+      'Aqui esta el analisis pedido:\n{"resumen":"r","diagnostico":"d"}\nEspero que sirva.',
+    )
+    expect(a.diagnostico).toBe('d')
+  })
+
+  it('lanza si la respuesta no es JSON, con un snippet como evidencia (va a ai.jobs.error)', () => {
+    expect(() => parsearAnalisis('no soy json')).toThrow(/inicio: "no soy json"/)
+  })
+
+  // Regresion del bug de prod (job 1ef8e7df, benchmark sonnet): dtc con varios
+  // codigos ("P0101, P0299") superaba max(10) y tiraba el analisis entero.
+  it('normaliza dtc a UN solo codigo OBD-II valido (el primero presente)', () => {
+    const a = parsearAnalisis(
+      JSON.stringify({
+        resumen: 'r',
+        diagnostico: 'd',
+        hallazgos: [
+          { titulo: 't', detalle: 'x', dtc: 'P0101, P0299' },
+          { titulo: 't', detalle: 'x', dtc: 'Sensor MAP (p0107)' },
+          { titulo: 't', detalle: 'x', dtc: 'sin codigo asociado' },
+        ],
+      }),
+    )
+    expect(a.hallazgos.map((h) => h.dtc)).toEqual(['P0101', 'P0107', null])
   })
 
   it('lanza si el JSON no cumple el schema (confianza > 1)', () => {
