@@ -21,6 +21,11 @@ export interface FakeState {
   routing: Record<string, unknown>[]
   analisis_caso: Record<string, unknown>[]
   suggestions: Record<string, unknown>[]
+  benchmarks: Record<string, unknown>[]
+  // Payload de api.analisis_grounding_v1 por caso_id (mig 155). Si el caso existe y
+  // no hay entrada, el fake devuelve un paquete con bloques vacios (como el contrato
+  // real ante un caso sin conocimiento asociado); caso inexistente → null.
+  grounding: Record<string, unknown>
 }
 
 export function nuevoEstado(parcial: Partial<FakeState> = {}): FakeState {
@@ -32,12 +37,16 @@ export function nuevoEstado(parcial: Partial<FakeState> = {}): FakeState {
     routing: [],
     analisis_caso: [],
     suggestions: [],
+    benchmarks: [],
+    grounding: {},
     ...parcial,
   }
 }
 
 type Row = Record<string, unknown>
 type Filtro = [string, unknown]
+// `grounding` es un mapa auxiliar (no una "tabla" consultable via from()).
+type TablaFake = Exclude<keyof FakeState, 'grounding'>
 
 interface Resultado {
   data: unknown
@@ -45,7 +54,7 @@ interface Resultado {
 }
 
 // Defaults aplicados al insertar, por tabla (espejan los DEFAULT de las migraciones).
-function aplicarDefaults(tabla: keyof FakeState, payload: Row): Row {
+function aplicarDefaults(tabla: TablaFake, payload: Row): Row {
   const ahora = new Date().toISOString()
   const base: Row = { id: randomUUID(), created_at: ahora, updated_at: ahora }
   if (tabla === 'jobs') {
@@ -81,7 +90,7 @@ class FakeQuery implements PromiseLike<Resultado> {
 
   constructor(
     private readonly estado: FakeState,
-    private readonly tabla: keyof FakeState,
+    private readonly tabla: TablaFake,
   ) {}
 
   select(_cols?: string): this {
@@ -284,6 +293,84 @@ async function ejecutarRpc(
         })
       return { data: null, error: null }
     }
+    case 'analisis_grounding_v1': {
+      // Espeja private.intel_analisis_grounding_v1 (mig 155): jsonb con 5 claves
+      // congeladas; NULL si el caso no existe. Los tests cargan el payload por caso
+      // en estado.grounding; sin entrada, un caso existente devuelve bloques vacios.
+      const casoId = args.p_caso_id as string
+      if (casoId in estado.grounding) return { data: estado.grounding[casoId], error: null }
+      const caso = estado.casos.find((c) => c.id === casoId)
+      if (!caso) return { data: null, error: null }
+      return {
+        data: {
+          caso: {
+            id: caso.id,
+            modelo_id: null,
+            combustible: null,
+            vehiculo: null,
+            dtcs: Array.isArray(caso.dtcs) ? caso.dtcs : [],
+          },
+          glosario: [],
+          precedentes: [],
+          manual: [],
+          siglas: [],
+        },
+        error: null,
+      }
+    }
+    case 'analisis_presupuesto_v1': {
+      // Espeja private.intel_analisis_presupuesto_v1 (mig 155): fila del routing
+      // activo del tipo + gasto TOTAL del dia (todos los tipos). 0 filas sin routing.
+      const tipo = args.p_tipo_tarea as string
+      const fila = estado.routing.find((r) => r.tipo_tarea === tipo && r.activo)
+      if (!fila) return { data: [], error: null }
+      const gastado = estado.jobs.reduce(
+        (sum, j) => sum + (typeof j.costo_usd === 'number' && j.finished_at ? j.costo_usd : 0),
+        0,
+      )
+      const techo = fila.presupuesto_usd_dia
+      return {
+        data: [
+          {
+            tipo_tarea: tipo,
+            presupuesto_usd_dia: techo ?? null,
+            gastado_hoy: gastado,
+            techo_alcanzado: typeof techo === 'number' && gastado >= techo,
+          },
+        ],
+        error: null,
+      }
+    }
+    case 'intel_benchmark_guardar_v1': {
+      // Espeja private.intel_benchmark_guardar_v1 (mig 155): APPEND en ai.benchmarks
+      // + cierre del job en `listo`, atomico. NO toca ai.analisis_caso (ADR-008).
+      const fila = aplicarDefaults('benchmarks', {
+        caso_id: args.p_caso_id,
+        job_id: args.p_job_id,
+        modelo: args.p_modelo,
+        resumen: args.p_resumen,
+        diagnostico: args.p_diagnostico,
+        severidad: args.p_severidad,
+        confianza: args.p_confianza,
+        hallazgos: args.p_hallazgos ?? [],
+        tokens_in: args.p_tokens_in,
+        tokens_out: args.p_tokens_out,
+        costo_usd: args.p_costo_usd,
+      })
+      estado.benchmarks.push(fila)
+      const job = estado.jobs.find((j) => j.id === args.p_job_id)
+      if (job)
+        Object.assign(job, {
+          status: 'listo',
+          modelo_usado: args.p_modelo,
+          tokens_in: args.p_tokens_in,
+          tokens_out: args.p_tokens_out,
+          costo_usd: args.p_costo_usd,
+          error: null,
+          finished_at: ahora(),
+        })
+      return { data: fila.id, error: null }
+    }
     case 'suggestions_registrar_v1': {
       const fila = aplicarDefaults('suggestions', {
         tipo: args.p_tipo,
@@ -305,7 +392,7 @@ async function ejecutarRpc(
 
 class FakeSchema {
   constructor(private readonly estado: FakeState) {}
-  from(tabla: keyof FakeState): FakeQuery {
+  from(tabla: TablaFake): FakeQuery {
     return new FakeQuery(this.estado, tabla)
   }
   rpc(name: string, args: Record<string, unknown> = {}): Promise<Resultado> {
@@ -318,7 +405,7 @@ class FakeClient {
   schema(_name: 'ai' | 'api'): FakeSchema {
     return new FakeSchema(this.estado)
   }
-  from(tabla: keyof FakeState): FakeQuery {
+  from(tabla: TablaFake): FakeQuery {
     return new FakeQuery(this.estado, tabla)
   }
 }

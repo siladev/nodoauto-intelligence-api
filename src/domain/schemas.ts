@@ -21,15 +21,36 @@ import { z } from 'zod'
 // api.analisis_reencolar_v1 (mig 111); el cliente solo manda el flag.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Tipos de tarea que el endpoint acepta hoy. El routing fino vive en datos
-// (ai.routing); esta lista solo acota la SUPERFICIE del comando.
-export const TIPOS_ANALISIS = ['analisis_caso'] as const
-export type TipoAnalisis = (typeof TIPOS_ANALISIS)[number]
+// Tipos de job que el endpoint acepta hoy: el analisis vigente ('analisis_caso')
+// o una corrida de BENCHMARK con modelo forzado por alias ('benchmark:<alias>',
+// ADR-008 §3 — el MISMO caso corrido con otro modelo SIN pisar el analisis
+// vigente; el resultado va a ai.benchmarks). El routing fino vive en datos
+// (ai.routing); este patron solo acota la SUPERFICIE del comando.
+// Rama unica (no union .or(): quirk de Zod 4 que vuelve opcional la clave, C-80).
+export const TIPO_ANALISIS_CASO = 'analisis_caso'
+export const PREFIJO_BENCHMARK = 'benchmark:'
+const TIPO_JOB_REGEX = /^(analisis_caso|benchmark:[a-z0-9][a-z0-9_-]{0,31})$/
+
+/** Identidad del job (ai.jobs.tipo): 'analisis_caso' | 'benchmark:<alias>'. */
+export type TipoJob = string
+
+/**
+ * Alias del modelo forzado si el tipo de job es una corrida de benchmark
+ * ('benchmark:<alias>'); null para el analisis normal. La validacion del alias
+ * contra ai.modelos es del procesamiento (alias invalido = job `fallido`).
+ */
+export function aliasDeBenchmark(tipo: string): string | null {
+  return tipo.startsWith(PREFIJO_BENCHMARK) ? tipo.slice(PREFIJO_BENCHMARK.length) : null
+}
 
 export const AnalizarComandoSchema = z
   .object({
     caso_id: z.string().uuid('caso_id debe ser un UUID'),
-    tipo: z.enum(TIPOS_ANALISIS).default('analisis_caso'),
+    tipo: z
+      .string()
+      .max(42)
+      .regex(TIPO_JOB_REGEX, 'tipo debe ser analisis_caso o benchmark:<alias>')
+      .default(TIPO_ANALISIS_CASO),
     usuario_id: z.string().uuid('usuario_id debe ser un UUID').optional(),
     reanalizar: z.boolean().default(false),
   })
@@ -40,6 +61,10 @@ export type AnalizarComando = z.infer<typeof AnalizarComandoSchema>
 // ─────────────────────────────────────────────────────────────────────────────
 // Forma del JSON que esperamos del modelo. Se valida con Zod antes de persistir:
 // si el modelo devuelve basura, no contaminamos ai.analisis_caso (cae a `fallido`).
+// `cita` (F4.b, DEC-029): la fuente del hallazgo ([Manual X, p. N] / [Glosario
+// PXXXX] / [Precedente: ...]) — el system prompt la EXIGE; viaja dentro del jsonb
+// `hallazgos` existente (sin DDL). Nullable: un hallazgo sin fuente provista debe
+// declararse sin cita, no inventarla.
 // ─────────────────────────────────────────────────────────────────────────────
 export const AnalisisModeloSchema = z.object({
   resumen: z.string().max(2000),
@@ -52,6 +77,7 @@ export const AnalisisModeloSchema = z.object({
         titulo: z.string().max(200),
         detalle: z.string().max(1000),
         dtc: z.string().max(10).nullable().default(null),
+        cita: z.string().max(300).nullable().default(null),
       }),
     )
     .max(10)

@@ -4,9 +4,9 @@ import type { Db } from '../lib/supabase.js'
 import { getDb } from '../lib/supabase.js'
 import { inferirConAnthropic, type Inferencia } from '../lib/anthropic.js'
 import { loadEnv } from '../config/env.js'
-import { AnalizarComandoSchema } from '../domain/schemas.js'
+import { AnalizarComandoSchema, aliasDeBenchmark } from '../domain/schemas.js'
 import { reVerificarAcceso, AutorizacionError } from '../services/autorizacion.js'
-import { encolarJob, reencolarJob, procesarJob } from '../services/jobs.js'
+import { encolarJob, reencolarJob, procesarJob, type JobPendiente } from '../services/jobs.js'
 import { logger } from '../lib/logger.js'
 import { servicioAuth } from './auth.js'
 
@@ -22,10 +22,12 @@ export interface AppDeps {
   db: Db
   inferir: Inferencia
   /**
-   * Dispara el procesamiento del job (fire-and-forget tras el 202). Inyectable para
+   * Dispara el procesamiento del job (fire-and-forget tras el 202). Recibe la
+   * identidad del job (id + caso_id + tipo): el pre-vuelo de procesarJob (grounding,
+   * tiering, guard de presupuesto) corre ANTES de tomar el job. Inyectable para
    * que los tests controlen/observen el background sin condiciones de carrera.
    */
-  dispararProcesamiento: (jobId: string) => void
+  dispararProcesamiento: (job: JobPendiente) => void
   /** Token de servicio esperado (Bearer). */
   tokenServicio: string
 }
@@ -72,10 +74,13 @@ export function createApp(deps: AppDeps): Hono {
     // 3. Encolar idempotente por (caso_id, tipo), o RE-ENCOLAR si el comando pide
     //    re-analisis (resetea el job salvo que este `procesando`). `disparar` indica si
     //    quedo un job `pendiente` para (re)procesar; idempotente = no se hizo trabajo.
+    //    BENCHMARK (ADR-008 §3): cada comando ES una re-corrida — siempre por
+    //    reencolar (crea o resetea la tupla (caso_id, 'benchmark:<alias>')), nunca
+    //    idempotente-para-siempre como el analisis normal.
     let job
     let disparar: boolean
     try {
-      if (comando.reanalizar) {
+      if (comando.reanalizar || aliasDeBenchmark(comando.tipo) !== null) {
         const r = await reencolarJob(deps.db, comando.caso_id, comando.tipo)
         job = r.job
         disparar = r.reencolado
@@ -92,7 +97,7 @@ export function createApp(deps: AppDeps): Hono {
     // 4. Solo dispara procesamiento si quedo un job pendiente (un retry idempotente, o un
     //    reanalizar sobre un job `procesando`, NO reprocesa).
     if (disparar) {
-      deps.dispararProcesamiento(job.id)
+      deps.dispararProcesamiento({ id: job.id, caso_id: job.caso_id, tipo: job.tipo })
     }
 
     // 5. 202 + id. Nunca el analisis (se lee por api.analisis_caso_v1).
@@ -116,10 +121,13 @@ export function createDefaultApp(): Hono {
   const deps: AppDeps = {
     db,
     inferir: inferirConAnthropic,
-    dispararProcesamiento: (jobId) => {
+    dispararProcesamiento: (job) => {
       // Fire-and-forget: el 202 ya salio. Errores se cierran dentro de procesarJob.
-      void procesarJob(db, inferirConAnthropic, jobId).catch((err) => {
-        logger.error({ err: err instanceof Error ? err.message : err, jobId }, 'Procesamiento sin capturar')
+      void procesarJob(db, inferirConAnthropic, job).catch((err) => {
+        logger.error(
+          { err: err instanceof Error ? err.message : err, jobId: job.id },
+          'Procesamiento sin capturar',
+        )
       })
     },
     tokenServicio: env.SERVICE_SHARED_TOKEN,
