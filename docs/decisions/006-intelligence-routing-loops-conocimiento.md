@@ -1,5 +1,9 @@
 # ADR-006 — puntero
 
+- **ID canónico:** (puntero) — la decisión real es **ADR-DB-006** (asiento 2026-08-01).
+  Convención: todo ADR se cita con prefijo de repo (`ADR-APP-`/`ADR-DB-`/`ADR-INTEL-`);
+  las decisiones PROPIAS de este servicio nacen acá como **ADR-INTEL-NNN** (ver `template.md`).
+
 La spec de este servicio (routing multi-modelo, los tres loops de mejora, el contrato
 HTTP `POST /v1/analizar`, la superficie `ai.*` y el contrato de lectura
 `api.analisis_caso_v1`) vive en el repo dueño de la plataforma:
