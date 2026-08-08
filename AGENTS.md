@@ -1,23 +1,54 @@
 # Nodo Auto Intelligence API — Reglas
 
-> **⚠️ ESTÁNDAR DE CALIDAD: PRODUCCIÓN — NO MVP.**
-> Nada acá es prototipo. Cada tarea cerrada queda **100% operativa, sin errores y con
-> tests**. No se avanza con bugs, TODOs activos (sin ticket `C-XX`/`S-XX`) ni tests
-> faltantes. `tsc --noEmit` EXIT 0 · `npm run test` verde · `npm run build` limpio.
+> **Qué es este repo:** el servicio de análisis con IA de NODO AUTO — su alcance, sus
+> contratos y sus límites están en §1.
+>
+> Cada repo del proyecto tiene su propia versión de las reglas comunes, redactada para
+> lo que ese repo hace. No es un bloque copiado entre repos.
 
-## Preámbulo universal (idéntico en los 3 repos — ADR-005 §13)
+## 0. Cómo se trabaja este repo
 
-- **Git trunk-based:** dos ramas permanentes (`main` = tronco integrado/verificado,
-  `production` = puntero a lo desplegado, movido SOLO por el bot del CI). Ramas de
-  tarea cortas y desechables: nacen de `origin/main`, se mergean por PR, se borran.
-  Nunca `git add .` (stagear por archivo). Un agente por repo a la vez.
-- **Primer push de rama nueva:** SIEMPRE `git push -u origin <rama>` (nombre explícito
-  + `-u`); `git push` pelado falla en el primer push. No hay `gh`: el PR lo abre Silvina
-  por el link que devuelve GitHub. Commits de `siladev`, **sin** `Co-Authored-By`.
+### 0.1 Gobernanza
+
+- **Este archivo solo lo modifica Silvina**; un agente, únicamente con su
+  autorización explícita para ese cambio puntual.
+- **Este archivo NO es bitácora:** son reglas atemporales. El estado, el avance, las
+  tareas y las fechas viven en el vault. Que una regla cite el caso que la originó es
+  fundamento, no crónica — eso se conserva.
+- **El push y el PR los hace SIEMPRE Silvina.** El agente entrega el comando de push,
+  el título y la descripción listos para pegar, y espera. Abrir el PR es su punto de
+  lectura. El comando lleva la RUTA del repo, no solo la rama — son 5 repos y pushear
+  en el equivocado es un problema:
+  `git -C C:\Users\silvi\dev\Proyecto_Nodo_Auto\<repo> push -u origin <rama>`. Con
+  `-C`, una ruta mal escrita falla en vez de pushear el repo de al lado.
+
+### 0.2 Estándar de producción — NO MVP
+
+- Nada acá es prototipo. Cada tarea cerrada queda **100% operativa, sin errores y con
+  tests**. No se avanza con bugs, TODOs activos (sin ticket `C-XX`/`S-XX`) ni tests
+  faltantes. `tsc --noEmit` EXIT 0 · `npm run test` verde · `npm run build` limpio.
+- **Funcional = completo + eficiente + seguro:** no es "anda", es el comando entero
+  terminado — validado, autorizado, persistido y observable por `job`, sin stubs ni
+  ramas que solo funcionan en el camino feliz. Los tres ejes, no dos de tres.
+- **El código se escribe a mano, línea por línea.** Prohibido editar archivos con
+  scripts de búsqueda-y-reemplazo masivo: dejan comentarios que describen código que ya
+  no existe, estilos mezclados y restos que ningún gate detecta (tsc, tests y build
+  pasan igual). Un refactor que toca 20 archivos son 20 ediciones conscientes; si eso es
+  mucho trabajo, sigue siendo el trabajo.
 - **Mentalidad de seguridad:** validación estricta de toda entrada externa (Zod con
   `max()`), secretos solo por env en módulos server-side, nunca devolver detalle crudo
   de error (Postgres/proveedor) al cliente — al cliente, mensaje genérico; el detalle a
   logs server-side. Defensa en profundidad: no confiar en una sola capa.
+
+### 0.3 Git y ADRs
+
+- **Trunk-based:** dos ramas permanentes (`main` = tronco integrado/verificado,
+  `production` = puntero a lo desplegado, movido SOLO por el bot del CI). Ramas de
+  tarea cortas y desechables: nacen de `origin/main`, se mergean por PR, se borran.
+  Nunca `git add .` (stagear por archivo). Un agente por repo a la vez.
+- **Primer push de rama nueva:** SIEMPRE con nombre explícito y `-u` (y con la ruta del
+  repo, §0.1); `git push` pelado falla porque la rama nace rastreando `origin/main`.
+  Commits de `siladev`, **sin** `Co-Authored-By`.
 - **ADRs:** toda decisión costosa de revertir deja un ADR corto. Las decisiones de
   plataforma viven en `nodoauto-database/docs/decisions/` (este repo apunta).
 
@@ -83,7 +114,9 @@ de la plataforma de datos (`nodoauto-database` es dueño del esquema). Su trabaj
 2. `npm run test` → verde (incluye `security.test.ts` por AGENTS §5)
 3. `npm run build` → dist limpio
 4. Estados explícitos en todo flujo (pendiente/procesando/listo/fallido visibles vía job)
-5. Tests creados/actualizados en `tests/unit/` para toda feature nueva
+5. Tests creados/actualizados en `tests/unit/` para toda feature nueva, cubriendo los
+   caminos de FALLO (token ausente o inválido, caso inexistente, autorización denegada,
+   proveedor de IA caído, cuota agotada), no solo el éxito
 
 ## 6. No-goals (de esta fase F3)
 
