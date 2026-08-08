@@ -4,8 +4,30 @@
 > Nada acá es prototipo. Cada tarea cerrada queda **100% operativa, sin errores y con
 > tests**. No se avanza con bugs, TODOs activos (sin ticket `C-XX`/`S-XX`) ni tests
 > faltantes. `tsc --noEmit` EXIT 0 · `npm run test` verde · `npm run build` limpio.
+> **Funcional = completo + eficiente + seguro:** no es "anda", es el comando entero
+> terminado — validado, autorizado, persistido y observable por `job`, sin stubs ni
+> ramas que solo funcionan en el camino feliz. Los tres ejes, no dos de tres.
 
-## Preámbulo universal (idéntico en los 3 repos — ADR-005 §13)
+## Gobernanza (antes que cualquier otra regla)
+
+- **Este archivo solo lo modifica Silvina**; un agente, únicamente con su
+  autorización explícita para ese cambio puntual.
+- **Este archivo NO es bitácora:** son reglas atemporales. El estado, el avance, las
+  tareas y las fechas viven en el vault. Que una regla cite el caso que la originó es
+  fundamento, no crónica — eso se conserva.
+- **El push y el PR los hace SIEMPRE Silvina.** El agente entrega el comando de push
+  (con el repo), el título y la descripción listos para pegar, y espera. Abrir el PR es
+  su punto de lectura.
+- **El código se escribe a mano, línea por línea.** Prohibido editar archivos con
+  scripts de búsqueda-y-reemplazo masivo: dejan comentarios que describen código que ya
+  no existe, estilos mezclados y restos que ningún gate detecta (tsc, tests y build
+  pasan igual). Un refactor que toca 20 archivos son 20 ediciones conscientes; si eso es
+  mucho trabajo, sigue siendo el trabajo.
+
+## Preámbulo (git, seguridad y ADRs)
+
+> Cada repo del proyecto tiene su propia versión de estas reglas, redactada para lo que
+> ese repo hace. No es un bloque copiado: si algo cambia acá, no cambia solo en los otros.
 
 - **Git trunk-based:** dos ramas permanentes (`main` = tronco integrado/verificado,
   `production` = puntero a lo desplegado, movido SOLO por el bot del CI). Ramas de
@@ -83,7 +105,9 @@ de la plataforma de datos (`nodoauto-database` es dueño del esquema). Su trabaj
 2. `npm run test` → verde (incluye `security.test.ts` por AGENTS §5)
 3. `npm run build` → dist limpio
 4. Estados explícitos en todo flujo (pendiente/procesando/listo/fallido visibles vía job)
-5. Tests creados/actualizados en `tests/unit/` para toda feature nueva
+5. Tests creados/actualizados en `tests/unit/` para toda feature nueva, cubriendo los
+   caminos de FALLO (token ausente o inválido, caso inexistente, autorización denegada,
+   proveedor de IA caído, cuota agotada), no solo el éxito
 
 ## 6. No-goals (de esta fase F3)
 
